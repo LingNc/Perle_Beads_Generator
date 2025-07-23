@@ -1,3 +1,6 @@
 [submodule "libs/cairomm"]
 	path = libs/cairomm
 	url = https://gitlab.freedesktop.org/cairo/cairomm.git
+[submodule "libs/cxxopts"]
+	path = libs/cxxopts
+	url = https://github.com/jarro2783/cxxopts.git
