@@ -1,0 +1,7 @@
+[wrap-git]
+directory = cairomm
+url = ../libs/cairomm
+revision = 1.18.0
+
+[provide]
+cairomm-1.16 = cairomm_dep

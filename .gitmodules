@@ -1,0 +1,3 @@
+[submodule "libs/cairomm"]
+	path = libs/cairomm
+	url = https://gitlab.freedesktop.org/cairo/cairomm.git
