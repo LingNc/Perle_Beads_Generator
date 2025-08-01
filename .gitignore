@@ -3,7 +3,9 @@
 !*.*
 
 # !libs/*
-!subprojects/*
+subprojects/*
+!subprojects/cairomm.wrap
+!subprojects/cxxopts.wrap
 
 build*/
 input*/

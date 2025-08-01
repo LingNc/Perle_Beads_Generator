@@ -1,6 +1,0 @@
-[submodule "subprojects/cairomm"]
-	path = subprojects/cairomm
-	url = https://gitlab.freedesktop.org/cairo/cairomm.git
-[submodule "subprojects/cxxopts"]
-	path = subprojects/cxxopts
-	url = https://github.com/jarro2783/cxxopts.git
