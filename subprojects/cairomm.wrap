@@ -1,6 +1,6 @@
 [wrap-git]
 directory = cairomm
-url = ../libs/cairomm
+url = https://gitlab.freedesktop.org/cairo/cairomm.git
 revision = 1.18.0
 
 [provide]

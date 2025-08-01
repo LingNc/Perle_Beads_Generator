@@ -1,0 +1,10 @@
+[wrap-git]
+directory = cxxopts
+url = https://github.com/jarro2783/cxxopts.git
+revision = v3.3.1
+
+[provide]
+cxxopts = cxxopts_dep
+
+[cmake]
+# 这告诉 Meson 这是一个 CMake 项目

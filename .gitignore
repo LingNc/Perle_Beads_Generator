@@ -2,8 +2,8 @@
 !**/*/
 !*.*
 
-
 # !libs/*
 !subprojects/*
 
 build*/
+input*/
