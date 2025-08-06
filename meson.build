@@ -28,14 +28,14 @@ cxxopts_cmake = cmake.subproject('cxxopts')
 # 获取 CMake target（cxxopts 提供的 target 名称）
 cxxopts_dep = cxxopts_cmake.dependency('cxxopts')
 
-# 添加包含目录
-inc_dir = include_directories('src')
+# 添加头文件目录
+inc_dir = include_directories('src/types')
 
 # 使用 Python 脚本动态收集源文件
 python = import('python').find_installation()
 
 # 定义搜索目录和文件类型
-src_directories = ['src/types', 'src/app', 'src/utils']
+src_directories = ['src/app', 'src/utils']
 file_types = ['cppm', 'cpp']
 
 # 调用收集脚本
@@ -75,19 +75,6 @@ endif
 
 # 编译器参数支持模块
 cpp_args = []
-
-# 检查编译器是否支持模块
-compiler = meson.get_compiler('cpp')
-if compiler.get_id() == 'gcc'
-  # GCC 支持模块的参数
-  cpp_args += ['-fmodules-ts', '-fmodule-header=system']
-elif compiler.get_id() == 'clang'
-  # Clang 支持模块的参数
-  cpp_args += ['-fmodules', '-fcxx-modules']
-elif compiler.get_id() == 'msvc'
-  # MSVC 支持模块的参数
-  cpp_args += ['/experimental:module']
-endif
 
 executable('perler-generator',
   all_sources,

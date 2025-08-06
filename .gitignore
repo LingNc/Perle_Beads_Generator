@@ -9,3 +9,5 @@ subprojects/*
 
 build*/
 input*/
+
+mount.sh
