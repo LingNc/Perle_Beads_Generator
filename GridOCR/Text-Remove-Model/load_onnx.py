@@ -1,6 +1,60 @@
 import numpy as np
 import cv2
 import sys
+import re
+
+# === 环境检测：CUDA 与 ONNXRuntime ===
+print("=== 环境检测 ===")
+# 检查 OpenCV 是否编译了 CUDA 支持
+build_info = cv2.getBuildInformation()
+print("OpenCV WITH CUDA:", "CUDA" in build_info)
+try:
+    cuda_count = cv2.cuda.getCudaEnabledDeviceCount()
+    print("CUDA 设备数量:", cuda_count)
+except Exception:
+    print("cv2.cuda.getCudaEnabledDeviceCount 不可用或无 CUDA 设备")
+# 检查 onnxruntime GPU provider
+try:
+    import onnxruntime as ort
+    print("ONNXRuntime 可用提供者:", ort.get_available_providers())
+except ImportError:
+    print("未安装 onnxruntime")
+print("================")
+
+def inspect_onnx_model(onnx_path):
+    """检查 ONNX 模型的输入输出信息"""
+    try:
+        import onnxruntime as ort
+        session = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
+
+        print(f"\n=== 模型信息：{onnx_path} ===")
+
+        # 输入信息
+        for i, input_info in enumerate(session.get_inputs()):
+            print(f"输入 {i}:")
+            print(f"  名称: {input_info.name}")
+            print(f"  形状: {input_info.shape}")
+            print(f"  类型: {input_info.type}")
+
+            # 检查是否有动态维度
+            if any(isinstance(dim, str) or dim == -1 for dim in input_info.shape):
+                print(f"  ✓ 支持动态尺寸")
+            else:
+                print(f"  ⚠️ 固定尺寸，必须严格匹配")
+
+        # 输出信息
+        for i, output_info in enumerate(session.get_outputs()):
+            print(f"输出 {i}:")
+            print(f"  名称: {output_info.name}")
+            print(f"  形状: {output_info.shape}")
+            print(f"  类型: {output_info.type}")
+
+        print("=" * 50)
+        return session.get_inputs()[0].shape
+
+    except Exception as e:
+        print(f"⚠️ 无法检查模型信息: {e}")
+        return None
 
 def preprocess_image(img, target_size=1024):
     """读光OCR的预处理方式 - 保持原始比例"""
@@ -113,25 +167,8 @@ def generate_original_prob_map(prob_map, scale, offset, original_size, target_si
     else:
         return np.zeros((original_h, original_w), dtype=np.uint8)
 
-def detect_text_duguang(onnx_path, image_path, target_size=1024, threshold=0.3, use_gpu=False):
+def detect_text_duguang(onnx_path, image_path, target_size=1024, threshold=0.3, use_gpu=False, use_ort=False):
     """使用读光OCR的方式检测文本"""
-    # 加载模型
-    net = cv2.dnn.readNetFromONNX(onnx_path)
-
-    # 设置GPU或CPU后端
-    if use_gpu:
-        try:
-            net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
-            net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
-            print("✓ 使用GPU加速")
-        except Exception as e:
-            print(f"⚠️ GPU设置失败，使用CPU: {e}")
-            net.setPreferableBackend(cv2.dnn.DNN_BACKEND_DEFAULT)
-            net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
-    else:
-        net.setPreferableBackend(cv2.dnn.DNN_BACKEND_DEFAULT)
-        net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
-        print("使用CPU推理")
 
     # 读取图像
     img = cv2.imread(image_path)
@@ -158,8 +195,49 @@ def detect_text_duguang(onnx_path, image_path, target_size=1024, threshold=0.3, 
     print(f"输入 blob 形状: {blob.shape}")
 
     # 推理
-    net.setInput(blob)
-    outputs = net.forward()
+    if use_ort:
+        # 使用 ONNXRuntime 推理
+        try:
+            import onnxruntime as ort
+            providers = ["CUDAExecutionProvider", "CPUExecutionProvider"] if use_gpu else ["CPUExecutionProvider"]
+            session = ort.InferenceSession(onnx_path, providers=providers)
+            print(f"✓ 使用 ONNXRuntime，提供者: {session.get_providers()}")
+
+            input_name = session.get_inputs()[0].name
+            outputs = session.run(None, {input_name: blob.astype(np.float32)})
+            print(f"✓ ONNXRuntime 推理成功")
+        except Exception as e:
+            print(f"⚠️ ONNXRuntime 推理失败: {e}")
+            return [], None, None
+    else:
+        # 使用 OpenCV DNN
+        net = cv2.dnn.readNetFromONNX(onnx_path)
+
+        # 设置GPU或CPU后端
+        if use_gpu:
+            try:
+                net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
+                net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
+                print("✓ 使用 OpenCV DNN GPU加速")
+            except Exception as e:
+                print(f"⚠️ GPU设置失败，使用CPU: {e}")
+                net.setPreferableBackend(cv2.dnn.DNN_BACKEND_DEFAULT)
+                net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+        else:
+            net.setPreferableBackend(cv2.dnn.DNN_BACKEND_DEFAULT)
+            net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+            print("使用 OpenCV DNN CPU推理")
+
+        # OpenCV DNN 推理
+        net.setInput(blob)
+        try:
+            outputs = net.forward()
+        except cv2.error as e:
+            print(f"⚠️ GPU推理失败，回退到CPU: {e}")
+            # 回退到CPU
+            net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+            net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+            outputs = net.forward()
 
     print(f"模型输出数量: {len(outputs)}")
     for i, output in enumerate(outputs):
@@ -274,28 +352,50 @@ def visualize_results(image_path, boxes, binary_map=None, prob_map=None):
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        print("用法: python load_onnx.py <model.onnx> <test.jpg> [--gpu]")
+        print("用法: python load_onnx.py <model.onnx> <test.jpg> [--gpu] [--ort]")
         print("示例: python load_onnx.py model_1024x1024.onnx table_sample.jpg")
-        print("GPU加速: python load_onnx.py model_1024x1024.onnx table_sample.jpg --gpu")
+        print("GPU加速 (OpenCV): python load_onnx.py model_1024x1024.onnx table_sample.jpg --gpu")
+        print("ONNXRuntime CPU: python load_onnx.py model_1024x1024.onnx table_sample.jpg --ort")
+        print("ONNXRuntime GPU: python load_onnx.py model_1024x1024.onnx table_sample.jpg --ort --gpu")
         sys.exit(1)
 
     onnx_path, img_path = sys.argv[1], sys.argv[2]
 
-    # 检查是否使用GPU
+    # 首先检查模型的输入要求
+    model_input_shape = inspect_onnx_model(onnx_path)
+
+    # 检查推理方式
     use_gpu = "--gpu" in sys.argv or "-g" in sys.argv
+    use_ort = "--ort" in sys.argv or "--onnxruntime" in sys.argv
 
     # 智能推断输入尺寸
     target_size = "auto"  # 默认自动
 
-    # 首先尝试从文件名推断
-    # if "512" in onnx_path:
-    #     target_size = 512
-    # elif "1024" in onnx_path:
-    #     target_size = 1024
-    # elif "1600" in onnx_path:
-    #     target_size = 1600
-    # elif "2400" in onnx_path:
-    #     target_size = 2400
+    # 最优先：从模型本身获取固定尺寸
+    if model_input_shape and len(model_input_shape) >= 4:
+        # 检查是否是固定尺寸 (非动态维度)
+        h_dim, w_dim = model_input_shape[2], model_input_shape[3]
+        if isinstance(h_dim, int) and isinstance(w_dim, int) and h_dim == w_dim:
+            target_size = h_dim
+            print(f"从模型获取固定输入尺寸: {target_size}x{target_size}")
+
+    # 次优先：从文件名推断
+    if target_size == "auto":
+        # 使用正则表达式从文件名中提取尺寸信息
+        size_pattern = r'(\d+)x\1'  # 匹配如 1024x1024, 2400x2400 等格式
+        size_match = re.search(size_pattern, onnx_path)
+
+        if size_match:
+            target_size = int(size_match.group(1))
+            print(f"从文件名检测到固定尺寸: {target_size}x{target_size}")
+        else:
+            # 如果没有找到标准格式，尝试匹配单个数字（如 512, 1024 等）
+            single_size_pattern = r'(\d{3,4})(?!x)'  # 匹配3-4位数字，但后面不跟x
+            single_match = re.search(single_size_pattern, onnx_path)
+            if single_match:
+                potential_size = int(single_match.group(1))
+                target_size = potential_size
+                print(f"从文件名推断尺寸: {target_size}x{target_size}")
 
     # 如果没有从文件名中找到尺寸，读取图像来自动判断
     if target_size == "auto":
@@ -314,7 +414,7 @@ if __name__ == "__main__":
             # elif max_dim <= 2048:
             #     target_size = 2048
             # else:
-            target_size = min(2048,max_dim)  # 最大限制
+            target_size = min(4096,max_dim)  # 最大限制
 
             # 确保是32的倍数
             target_size = ((target_size + 31) // 32) * 32
@@ -332,11 +432,12 @@ if __name__ == "__main__":
     print(f"加载模型: {onnx_path}")
     print(f"处理图像: {img_path}")
     print(f"使用输入尺寸: {target_size}x{target_size}")
+    print(f"推理引擎: {'ONNXRuntime' if use_ort else 'OpenCV DNN'}")
     print(f"GPU加速: {'开启' if use_gpu else '关闭'}")
 
     try:
         # 检测文本
-        boxes, binary_map, prob_map = detect_text_duguang(onnx_path, img_path, target_size, use_gpu=use_gpu)
+        boxes, binary_map, prob_map = detect_text_duguang(onnx_path, img_path, target_size, use_gpu=use_gpu, use_ort=use_ort)
         print(f"\n最终结果：检测到 {len(boxes)} 个文本区域")
 
         # 可视化结果
