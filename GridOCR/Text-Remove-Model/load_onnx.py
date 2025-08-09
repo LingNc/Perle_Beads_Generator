@@ -184,13 +184,39 @@ def detect_text_duguang(onnx_path, image_path, target_size=1024, threshold=0.3, 
     print(f"预处理后尺寸: {processed_img.shape}")
     print(f"缩放比例: {scale:.4f}, 偏移: {offset}")
 
-    # 创建blob（读光OCR使用RGB顺序，均值归一化）
-    blob = cv2.dnn.blobFromImage(processed_img,
-                                scalefactor=1.0/255.0,
-                                size=(target_size, target_size),
-                                mean=(0.485, 0.456, 0.406),  # ImageNet均值
-                                swapRB=True,  # BGR->RGB
-                                crop=False)
+    # 检查模型期望的通道数
+    expected_channels = 3  # 默认RGB
+    if use_ort:
+        try:
+            import onnxruntime as ort
+            session_check = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
+            input_shape = session_check.get_inputs()[0].shape
+            if len(input_shape) >= 2 and isinstance(input_shape[1], int):
+                expected_channels = input_shape[1]
+                print(f"检测到模型期望通道数: {expected_channels}")
+        except:
+            pass
+
+    # 创建blob
+    if expected_channels == 1:
+        # 单通道模型：转换为灰度图
+        gray_img = cv2.cvtColor(processed_img, cv2.COLOR_BGR2GRAY)
+        blob = cv2.dnn.blobFromImage(gray_img,
+                                    scalefactor=1.0/255.0,
+                                    size=(target_size, target_size),
+                                    mean=(0.485,),  # 单通道均值
+                                    swapRB=False,
+                                    crop=False)
+        print(f"单通道模型，使用灰度图输入")
+    else:
+        # 多通道模型：RGB
+        blob = cv2.dnn.blobFromImage(processed_img,
+                                    scalefactor=1.0/255.0,
+                                    size=(target_size, target_size),
+                                    mean=(0.485, 0.456, 0.406),  # ImageNet均值
+                                    swapRB=True,  # BGR->RGB
+                                    crop=False)
+        print(f"多通道模型，使用RGB输入")
 
     print(f"输入 blob 形状: {blob.shape}")
 
@@ -314,10 +340,7 @@ def visualize_results(image_path, boxes, binary_map=None, prob_map=None):
     # 绘制检测框
     for i, box in enumerate(boxes):
         cv2.drawContours(img, [box], 0, (0, 255, 0), 2)
-        # 添加编号
-        center = np.mean(box, axis=0).astype(int)
-        cv2.putText(img, str(i), tuple(center), cv2.FONT_HERSHEY_SIMPLEX,
-                   0.8, (255, 0, 0), 2)
+        # 不添加编号标注
 
     # 保存结果
     output_path = image_path.replace('.jpg', '_detected.jpg')
@@ -353,10 +376,10 @@ def visualize_results(image_path, boxes, binary_map=None, prob_map=None):
 if __name__ == "__main__":
     if len(sys.argv) < 3:
         print("用法: python load_onnx.py <model.onnx> <test.jpg> [--gpu] [--ort]")
-        print("示例: python load_onnx.py model_1024x1024.onnx table_sample.jpg")
-        print("GPU加速 (OpenCV): python load_onnx.py model_1024x1024.onnx table_sample.jpg --gpu")
-        print("ONNXRuntime CPU: python load_onnx.py model_1024x1024.onnx table_sample.jpg --ort")
-        print("ONNXRuntime GPU: python load_onnx.py model_1024x1024.onnx table_sample.jpg --ort --gpu")
+        print("示例: python load_onnx.py model_1024x1024.onnx test_image.jpg")
+        print("GPU加速 (OpenCV): python load_onnx.py model_1024x1024.onnx test_image.jpg --gpu")
+        print("ONNXRuntime CPU: python load_onnx.py model_1024x1024.onnx test_image.jpg --ort")
+        print("ONNXRuntime GPU: python load_onnx.py model_1024x1024.onnx test_image.jpg --ort --gpu")
         sys.exit(1)
 
     onnx_path, img_path = sys.argv[1], sys.argv[2]
@@ -389,13 +412,17 @@ if __name__ == "__main__":
             target_size = int(size_match.group(1))
             print(f"从文件名检测到固定尺寸: {target_size}x{target_size}")
         else:
-            # 如果没有找到标准格式，尝试匹配单个数字（如 512, 1024 等）
-            single_size_pattern = r'(\d{3,4})(?!x)'  # 匹配3-4位数字，但后面不跟x
-            single_match = re.search(single_size_pattern, onnx_path)
-            if single_match:
-                potential_size = int(single_match.group(1))
-                target_size = potential_size
-                print(f"从文件名推断尺寸: {target_size}x{target_size}")
+            # 如果没有找到标准格式，尝试匹配 NxN 格式（如 600x600, 800x800 等）
+            general_size_pattern = r'(\d+)x(\d+)'  # 匹配任意 NxM 格式
+            general_match = re.search(general_size_pattern, onnx_path)
+            if general_match:
+                width, height = int(general_match.group(1)), int(general_match.group(2))
+                if width == height:  # 只接受正方形输入
+                    target_size = width
+                    print(f"从文件名推断尺寸: {target_size}x{target_size}")
+                else:
+                    print(f"从文件名检测到非正方形尺寸 {width}x{height}，将使用 {max(width, height)}x{max(width, height)}")
+                    target_size = max(width, height)
 
     # 如果没有从文件名中找到尺寸，读取图像来自动判断
     if target_size == "auto":
