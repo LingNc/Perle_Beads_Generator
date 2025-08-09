@@ -1,1 +1,5 @@
 test_assert/
+*.png
+*.jpg
+*.log
+Text-Remove-Model/*.onnx
